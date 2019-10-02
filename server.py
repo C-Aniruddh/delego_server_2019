@@ -7,6 +7,7 @@ import bcrypt
 import re
 import os
 import datetime
+from string import whitespace
 
 app = Flask(__name__)
 app.secret_key = 'mysecret'
@@ -29,7 +30,39 @@ speakers = mongo.db.speakers
 speaker_preferences = mongo.db.speaker_preferences
 shop_items = mongo.db.shop_items
 orders = mongo.db.orders
+sessions = mongo.db.sessions
+chat_servers = mongo.db.chat_servers
 
+@app.route('/session/enable')
+def session_enable():
+    committee = request.args.get('committee')
+    find_session = sessions.find_one({'committee': committee})
+    if find_session is None:
+        sessions.insert({'committee': committee, 'status': 'active'})
+    else:
+        sessions.update({'committee': committee}, {'$set': {'status': 'active'}})
+    return json.dumps({'status': 'successful', 'action': 'enable session'})
+
+@app.route('/session/disable')
+def session_disable():
+    committee = request.args.get('committee')
+    find_session = sessions.find_one({'committee': committee})
+    if find_session is None:
+        sessions.insert({'committee': committee, 'status': 'inactive'})
+    else:
+        sessions.update({'committee': committee}, {'$set': {'status': 'inactive'}})
+    return json.dumps({'status': 'successful', 'action': 'disable session'})
+
+
+@app.route('/session/get')
+def session_get():
+    committee = request.args.get('committee')
+    find_session = sessions.find_one({'committee': committee})
+    if find_session is None:
+        sessions.insert({'committee': committee, 'status': 'inactive'})
+    find_session1 = sessions.find_one({'committee': committee})
+    active = find_session1['status']
+    return json.dumps({'committee': committee, 'status': active})
 
 
 @app.route('/delegate/rd')
@@ -50,9 +83,12 @@ def delegate_food():
     find_user = users.find_one({'uid': uid})
     existing_data = dict(find_user['food_data'])
     new_data = existing_data
-    new_data[day][session] = "Checked In"
-    users.update({'uid': uid}, {"$set": {'food_data': new_data}})
-    return json.dumps({'status': 'successful', 'action': 'food_sessions'})
+    if new_data[day][session] == "Checked In":
+        return json.dumps({'status': 'unsuccessful', 'action': 'food_sessions'})
+    else:
+        new_data[day][session] = "Checked In"
+        users.update({'uid': uid}, {"$set": {'food_data': new_data}})
+        return json.dumps({'status': 'successful', 'action': 'food_sessions'})
 
 @app.route('/delegate/eb_attendance')
 def eb_attendance():
@@ -123,25 +159,59 @@ def disable_speakers():
 def add_to_speakers():
     uid = request.args.get('uid')
     committee = request.args.get('committee')
-    find_preference = speaker_preferences.find_one({'committee': committee})
-    allowed = find_preference['allowed']
-    if allowed == "yes":
+    find_speaker = speakers.find_one({'committee' : committee, 'uid': uid})
+    if find_speaker is None:
         speakers.insert({'uid': uid, 'committee': committee})
         return json.dumps({'status': 'successful', 'action': 'add to speakers'})
     else:
         return json.dumps({'status': 'unsuccessful', 'action': 'add to speakers'})
 
+@app.route('/in_speaker')
+def in_speaker():
+    uid = request.args.get('uid')
+    committee = request.args.get('committee')
+    find_speaker = speakers.find_one({'committee' : committee, 'uid': uid})
+    if find_speaker is None:
+        return json.dumps({'in_list' : 'no'})
+    else:
+        return json.dumps({'in_list' : 'yes'})
+
+
+@app.route('/chat/get_details')
+def chat_details():
+    committee = request.args.get('committee')
+    country = request.args.get('country')
+    chat_server = chat_servers.find_one({'committee': committee.lower()})
+    port = chat_server['port']
+    comm_new = committee.strip(whitespace + '"\'')
+    country_new = country.strip(whitespace + '"\'')
+    email = "%s_%s@delego.com" % (comm_new, country_new)
+    n_email = email.lower()
+    print(n_email)
+    password = "chatpassword@2019"
+    return json.dumps({'password': password, 'email': n_email, 'port': port})
+
+
+@app.route('/get_speakers')
+def get_speakers():
+    committee = request.args.get('committee')
+    speakers_list = speakers.find({'committee': committee})
+    to_ret = []
+    for speaker in speakers_list:
+        uid = speaker['uid']
+        user_details = users.find_one({'uid': uid})
+        user_name = user_details['name']
+        user_country = user_details['country']
+        to_ret.append({'uid': uid, 'name': user_name, 'country': user_country})
+    return json.dumps(to_ret)
+
+
 @app.route('/remove_from_speakers')
 def remove_from_speakers():
     uid = request.args.get('uid')
     committee = request.args.get('committee')
-    find_preference = speaker_preferences.find_one({'committee': committee})
-    allowed = find_preference['allowed']
-    if allowed == "yes":
-        speakers.remove({'uid': uid, 'committee': committee})
-        return json.dumps({'status': 'successful', 'action': 'remove from speakers'})
-    else:
-        return json.dumps({'status': 'unsuccessful', 'action': 'add to speakers'})
+    speakers.remove({'uid': uid, 'committee': committee})
+    return json.dumps({'status': 'successful', 'action': 'remove from speakers'})
 
 
 @app.route('/add_to_shop', methods = ['POST'])
@@ -151,26 +221,42 @@ def add_to_shop():
     item_title = request.form['title']
     item_description = request.form['description']
     item_cost = request.form['cost']
+    current_quantity = request.form['in_stock']
     uid = str(uuid.uuid4().hex)
-    shop_items.insert({'image_url': image_url, 'image_url2': image_url2, 'title': item_title, 'description': item_description, 'uid': uid, 'cost': item_cost})
+    shop_items.insert({'image_url': image_url, 'image_url2': image_url2, 'title': item_title, 'description': item_description, 'uid': uid, 'cost': item_cost, 'in_stock': current_quantity})
     return json.dumps({'status': 'successful', 'action': 'add to shop'})
 
 @app.route('/remove_from_shop')
 def remove_from_shop():
     uid = request.args.get('uid')
     shop_items.remove({'uid': uid})
-
+    return json.dumps({'item': 'removed'})
 
 @app.route('/list_items')
 def list_items():
     items = shop_items.find()
-    return json.dumps(items)
+    to_ret = []
+    for item in items:
+        image_url = item['image_url']
+        image_url2 = item['image_url2']
+        item_title = item['title']
+        item_description = item['description']
+        in_stock = item['in_stock']
+        item_cost = item['cost']
+        uid = item['uid']
+        dic = {'image_url': image_url, 'image_url2': image_url2, 'title': item_title, 'description': item_description, 'uid': uid, 'cost': item_cost, 'in_stock': current_quantity}
+        to_ret.append(dic)
+    return json.dumps(to_ret)
 
 @app.route('/place_order', methods=['POST'])
 def place_order():
     user_uid = request.args.get('user_uid')
     item_uid = request.args.get('item_uid')
     timestamp = str(datetime.datetime.now().timestamp())
+    find_item = shop_items.find_one({'uid': item_uid})
+    find_item_quantity = find_item['in_stock']
+    new_quantity = str(int(find_item_quantity) - 1)
+    shop_items.update({'uid': item_uid}, {'$set': {'in_stock': new_quantity}})
     order_uid = str(uuid.uuid4().hex)
     orders.insert({'order_uid': order_uid, 'item_uid': item_uid, 'user_uid': user_uid, 'timestamp': timestamp})
     return json.dumps({'status': 'successful', 'action': 'add to order'})
@@ -268,4 +354,4 @@ def gen_hashpass(password):
 
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=80, debug=True)
