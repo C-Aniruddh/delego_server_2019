@@ -32,6 +32,22 @@ shop_items = mongo.db.shop_items
 orders = mongo.db.orders
 sessions = mongo.db.sessions
 chat_servers = mongo.db.chat_servers
+sponsors = mongo.db.sponsors
+
+
+@app.route('/get_sponsors')
+def get_sponsors():
+    all_sponsors = sponsors.find()
+    to_ret = []
+    for sponsor in all_sponsors:
+        image_url = sponsor['image_url']
+        sponsor_name = sponsor['name']
+        sponsor_title = sponsor['title']
+        sponsor_url = sponsor['url']
+        dic = {'image_url': image_url, 'name': sponsor_name, 'title': sponsor_title, 'url': sponsor_url}
+        to_ret.append(dic)
+
+    return json.dumps(to_ret)
 
 @app.route('/session/enable')
 def session_enable():
